@@ -26,16 +26,7 @@ const Swap = () => {
 
   const [tokenDecimals, setTokenDecimals] = useState({});
 
-  const debugContractCall = async (contract, methodName, ...args) => {
-    try {
-      const result = await contract[methodName](...args);
-      console.log(`${methodName} successful:`, result);
-      return result;
-    } catch (error) {
-      console.error(`${methodName} failed:`, error);
-      throw error;
-    }
-  };
+ 
 
   const tokens = {
     GT: "0x7873a7923350E60eFF9cE2673C2b713C992Db3E1",
@@ -87,7 +78,7 @@ const Swap = () => {
 
   const getTokenDecimals = async (tokenAddress, tokenSymbol) => {
     if (!signer) return DEFAULT_DECIMALS[tokenSymbol] || 18;
-    
+
     const tokenContract = new Contract(tokenAddress, ERC20_ABI, signer);
     try {
       if (typeof tokenContract.decimals === 'function') {
@@ -170,16 +161,16 @@ const Swap = () => {
       alert("Please connect your wallet first.");
       return;
     }
-    
+
     try {
       const tokenContract = new Contract(tokenAddress, ERC20_ABI, signer);
       const decimals = tokenDecimals[fromToken] || await getTokenDecimals(tokenAddress, fromToken);
       const approvalAmount = parseUnits(amount, decimals);
-      
+
       console.log(`Approving ${amount} tokens...`);
       const approvalTx = await tokenContract.approve(SWAP_CONTRACT_ADDRESS, approvalAmount);
       await approvalTx.wait();
-      
+
       console.log("Approval successful!");
       alert("Token approval successful. You can now proceed with the swap.");
     } catch (error) {
@@ -266,7 +257,7 @@ const Swap = () => {
 
         <div className="mb-6">
           <label className="block text-base font-bold mb-2 text-yellow-400">From Token</label>
-          <select 
+          <select
             onChange={handleFromTokenChange}
             className="w-full bg-blue-700 text-yellow-300 p-3 rounded-lg border border-yellow-500 focus:outline-none appearance-none cursor-pointer"
           >
@@ -280,7 +271,7 @@ const Swap = () => {
 
         <div className="mb-6">
           <label className="block text-base font-bold mb-2 text-yellow-400">To Token</label>
-          <select 
+          <select
             onChange={handleToTokenChange}
             className="w-full bg-blue-700 text-yellow-300 p-3 rounded-lg border border-yellow-500 focus:outline-none appearance-none cursor-pointer"
           >
@@ -311,32 +302,34 @@ const Swap = () => {
               className="w-full bg-blue-700 text-yellow-300 p-3 rounded-lg border border-yellow-500 focus:outline-none mt-2"
               placeholder="Enter new exchange rate"
             />
-            <button 
+            <button
               onClick={handleSetExchangeRate}
-              className="w-full bg-green-500 hover:bg-green-400 text-lg py-2 rounded-lg font-semibold text-blue-900 transition duration-300 mt-2"
+              className="w-full bg-cyan-300 hover:bg-green-400 text-lg py-2 rounded-lg font-semibold text-blue-900 transition duration-300 mt-2"
             >
               Set New Exchange Rate
             </button>
           </div>
         )}
+        <button
+          onClick={() => approveToken(tokens[fromToken], amount)}
+          className="w-full bg-green-500 hover:bg-green-400 text-lg py-3 rounded-lg font-semibold text-blue-900 transition duration-300"
+        >
+          Approve Tokens
+        </button>
+        <br /><br />
 
-<button 
-        onClick={handleSwap}
-        className="w-full bg-yellow-500 hover:bg-yellow-400 text-lg py-3 rounded-lg font-semibold text-blue-900 transition duration-300 relative overflow-hidden group mb-4"
-      >
-        <span className="relative z-10 text-lg font-bold">
-          Swap Tokens
-        </span>
-        <div className="absolute inset-0 h-full w-full bg-yellow-400 transform scale-x-0 group-hover:scale-x-100 transition-transform duration-300 origin-left"></div>
-      </button>
+        <button
+          onClick={handleSwap}
+          className="w-full bg-yellow-500 hover:bg-yellow-400 text-lg py-3 rounded-lg font-semibold text-blue-900 transition duration-300 relative overflow-hidden group mb-4"
+        >
+          <span className="relative z-10 text-lg font-bold">
+            Swap Tokens
+          </span>
+          <div className="absolute inset-0 h-full w-full bg-yellow-400 transform scale-x-0 group-hover:scale-x-100 transition-transform duration-300 origin-left"></div>
+        </button>
 
-      <button 
-        onClick={() => approveToken(tokens[fromToken], amount)}
-        className="w-full bg-green-500 hover:bg-green-400 text-lg py-3 rounded-lg font-semibold text-blue-900 transition duration-300"
-      >
-        Approve Tokens
-      </button>
-    </div>
+        
+      </div>
     </div>
   );
 };
