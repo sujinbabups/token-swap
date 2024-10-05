@@ -1,14 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { BrowserProvider, Contract, parseUnits, formatUnits } from 'ethers';
+import { BrowserProvider, Contract, parseUnits, formatUnits } from 'ethers'; 
+
 import abi from '../scdata/Swap.json'
 import deployedAddress from '../scdata/deployed_addresses.json'
-
-const ERC20_ABI = [
-  "function balanceOf(address owner) view returns (uint256)",
-  "function approve(address spender, uint256 amount) returns (bool)",
-  "function transfer(address to, uint256 amount) returns (bool)",
-  "function allowance(address owner, address spender) view returns (uint256)"
-];
+import ERC20_ABI from '../scdata/ERC20.json';
 
 const SWAP_CONTRACT_ABI = abi.abi;
 const SWAP_CONTRACT_ADDRESS = deployedAddress.SwapModuleTokenSwap;
@@ -23,16 +18,14 @@ const Swap = () => {
   const [balance, setBalance] = useState('');
   const [exchangeRate, setExchangeRate] = useState('0');
   const [newExchangeRate, setNewExchangeRate] = useState('');
-
   const [tokenDecimals, setTokenDecimals] = useState({});
 
- 
-
   const tokens = {
-    GT: "0x7873a7923350E60eFF9cE2673C2b713C992Db3E1",
-    ET: "0x3BCe90B2d61432351321acAb9777f17E6f11e720",
-    NewToken: "0xf8e81D47203A594245E36C48e151709F0C19fBe8"
+    GT: "0xC50b8ae9c3234309442be534354F963A4cAd31ca",
+    ET: "0xE6a6085DBbbD7f1AE5950B6973Ec9Cc1aDCFcD52",
+    NewToken: "0xE6a6085DBbbD7f1AE5950B6973Ec9Cc1aDCFcD53"
   };
+
   const DEFAULT_DECIMALS = {
     GT: 18,
     ET: 18,
@@ -53,7 +46,7 @@ const Swap = () => {
         const signer = await provider.getSigner();
         setSigner(signer);
         setAccount(accounts[0]);
-        console.log("Address:", accounts);
+        console.log("Coneected address:", accounts[0]);
       } catch (error) {
         console.error("Failed to connect wallet:", error);
       }
@@ -123,8 +116,9 @@ const Swap = () => {
       const swapContract = new Contract(SWAP_CONTRACT_ADDRESS, SWAP_CONTRACT_ABI, signer);
       try {
         const rate = await swapContract.getExchangeRate(tokens[from], tokens[to]);
-        const formattedRate = formatUnits(rate, 18);
         console.log("Raw rate:", rate.toString());
+        // The rate is already in the correct format (1e18 represents 1.0)
+        const formattedRate = formatUnits(rate, 18);
         console.log("Formatted rate:", formattedRate);
         setExchangeRate(formattedRate);
       } catch (error) {
@@ -142,10 +136,12 @@ const Swap = () => {
 
     try {
       const swapContract = new Contract(SWAP_CONTRACT_ADDRESS, SWAP_CONTRACT_ABI, signer);
+      // Convert the new rate to the contract's expected format
+      const rateInWei = parseUnits(newExchangeRate, 18);
       const tx = await swapContract.setExchangeRate(
         tokens[fromToken],
         tokens[toToken],
-        parseUnits(newExchangeRate, 18)
+        rateInWei
       );
       await tx.wait();
       alert("Exchange rate set successfully!");
@@ -179,16 +175,23 @@ const Swap = () => {
     }
   };
   const handleSwap = async () => {
-    if (!signer || !fromToken || !toToken || !amount) return;
-
+    if (!signer || !fromToken || !toToken || !amount) {
+      alert("Please fill in all fields and connect your wallet.");
+      return;
+    }
+  
     try {
       const fromTokenAddress = tokens[fromToken];
       const toTokenAddress = tokens[toToken];
       const swapContract = new Contract(SWAP_CONTRACT_ADDRESS, SWAP_CONTRACT_ABI, signer);
-
-      const fromDecimals = tokenDecimals[fromToken] || await getTokenDecimals(fromTokenAddress, fromToken);
-      const toDecimals = tokenDecimals[toToken] || await getTokenDecimals(toTokenAddress, toToken);
-
+  
+      // Get token decimals
+      const fromDecimals = await getTokenDecimals(fromTokenAddress, fromToken);
+      const toDecimals = await getTokenDecimals(toTokenAddress, toToken);
+  
+      // Convert amount to BigInt using ethers
+      const amountInWei = BigInt(parseUnits(amount, fromDecimals));
+  
       // Check exchange rate
       const rate = await swapContract.getExchangeRate(fromTokenAddress, toTokenAddress);
       console.log(`Exchange rate: ${formatUnits(rate, 18)}`);
@@ -196,57 +199,49 @@ const Swap = () => {
         alert("Exchange rate not set. Please set the rate before swapping.");
         return;
       }
-
+  
+      // Check balance 
+      const fromTokenContract = new Contract(fromTokenAddress, ERC20_ABI, signer);
+      const balance = await fromTokenContract.balanceOf(account);
+      const balanceBigInt = BigInt(balance.toString()); // Convert balance to BigInt
+      if (balanceBigInt < amountInWei) {
+        alert(`Insufficient balance. You have ${formatUnits(balanceBigInt, fromDecimals)} ${fromToken}, but you're trying to swap ${amount} ${fromToken}.`);
+        return;
+      }
+  
       // Check allowance
-      const hasAllowance = await checkAllowance(fromTokenAddress, amount);
-      if (!hasAllowance) {
-        const userConfirmed = window.confirm("Insufficient allowance. Do you want to approve the contract to spend your tokens?");
+      const allowance = await fromTokenContract.allowance(account, SWAP_CONTRACT_ADDRESS);
+      const allowanceBigInt = BigInt(allowance.toString()); // Convert allowance to BigInt
+      if (allowanceBigInt < amountInWei) {
+        const userConfirmed = window.confirm(`Insufficient allowance. Current allowance: ${formatUnits(allowanceBigInt, fromDecimals)} ${fromToken}. Do you want to approve ${amount} ${fromToken}?`);
         if (userConfirmed) {
-          await approveToken(fromTokenAddress, amount);
+          const approveTx = await fromTokenContract.approve(SWAP_CONTRACT_ADDRESS, amountInWei);
+          await approveTx.wait();
+          console.log("Approval transaction successful");
         } else {
           return;
         }
       }
-
-      // Check balance
-      const hasBalance = await checkBalance(fromTokenAddress, amount);
-      if (!hasBalance) {
-        alert("Insufficient balance. Please check your token balance.");
-        return;
-      }
-
-      // Convert amount to wei
-      const amountInWei = parseUnits(amount, fromDecimals);
-
-      // Estimate gas
-      const gasEstimate = await swapContract.swap.estimateGas(fromTokenAddress, toTokenAddress, amountInWei);
-      console.log(`Estimated gas: ${gasEstimate.toString()}`);
-
+  
       // Perform swap
-      const swapTx = await swapContract.swap(fromTokenAddress, toTokenAddress, amountInWei, {
-        gasLimit: gasEstimate * BigInt(12) / BigInt(10) // Add 20% buffer to gas estimate
-      });
+      const swapTx = await swapContract.swap(fromTokenAddress, toTokenAddress, amountInWei);
       await swapTx.wait();
-
+      console.log(swapTx);
+  
       alert("Swap successful!");
       updateExchangeRate(fromToken, toToken);
     } catch (error) {
       console.error("Swap failed:", error);
-      if (error.reason) {
-        alert(`Swap failed: ${error.reason}`);
-      } else if (error.data && error.data.message) {
-        alert(`Swap failed: ${error.data.message}`);
-      } else {
-        alert("Swap failed. Check console for details.");
-      }
+      alert(`Swap failed: ${error.message}`);
     }
   };
-
-
+  
+  
+  
 
   return (
     <div className="bg-gradient-to-r from-gray-500 to-blue-900 text-yellow-300 min-h-screen flex items-center justify-center p-4">
-      <div className="w-full max-w-md p-6 bg-blue-800 rounded-lg shadow-lg border-2 border-yellow-500">
+         <div className="w-full max-w-md p-6 bg-blue-800 rounded-lg shadow-lg border-2 border-yellow-500">
         <h2 className="text-3xl font-bold text-center mb-6 text-yellow-300">Swap Your Tokens</h2>
 
         <div className="mb-6">
@@ -293,23 +288,24 @@ const Swap = () => {
         </div>
 
         {fromToken && toToken && (
-          <div className="mb-6 text-center">
-            <p>Current Exchange Rate: 1 {fromToken} = {parseFloat(exchangeRate).toFixed(6)} {toToken}</p>
-            <input
-              type="number"
-              value={newExchangeRate}
-              onChange={(e) => setNewExchangeRate(e.target.value)}
-              className="w-full bg-blue-700 text-yellow-300 p-3 rounded-lg border border-yellow-500 focus:outline-none mt-2"
-              placeholder="Enter new exchange rate"
-            />
-            <button
-              onClick={handleSetExchangeRate}
-              className="w-full bg-cyan-300 hover:bg-green-400 text-lg py-2 rounded-lg font-semibold text-blue-900 transition duration-300 mt-2"
-            >
-              Set New Exchange Rate
-            </button>
-          </div>
-        )}
+     <div className="mb-6 text-center">
+       <p>Current Exchange Rate: 1 {fromToken} = {parseFloat(exchangeRate).toFixed(6)} {toToken}</p>
+       <input
+         type="number"
+         value={newExchangeRate}
+         onChange={(e) => setNewExchangeRate(e.target.value)}
+         className="w-full bg-blue-700 text-yellow-300 p-3 rounded-lg border border-yellow-500 focus:outline-none mt-2"
+         placeholder="Enter new rate (e.g., 1.5 for 1:1.5)"
+       />
+       <p className="text-sm mt-1 text-yellow-200">Enter the rate as a decimal (e.g., 2 means 2 {toToken} per 1 {fromToken})</p>
+       <button
+         onClick={handleSetExchangeRate}
+         className="w-full bg-cyan-300 hover:bg-green-400 text-lg py-2 rounded-lg font-semibold text-blue-900 transition duration-300 mt-2"
+       >
+         Set New Exchange Rate
+       </button>
+     </div>
+   )}
         <button
           onClick={() => approveToken(tokens[fromToken], amount)}
           className="w-full bg-green-500 hover:bg-green-400 text-lg py-3 rounded-lg font-semibold text-blue-900 transition duration-300"
